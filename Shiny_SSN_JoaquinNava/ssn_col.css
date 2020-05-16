@@ -1,0 +1,13 @@
+.navbar {
+    background-color: #FFCA05;
+    border-color: #FFCA05;
+}
+
+.navbar-brand {
+    color: white;
+    font-weight: bold;
+}
+.sidebar {
+  background-color: #def4fa  !important;
+  color: #2780e3 !important;
+}

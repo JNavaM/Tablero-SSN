@@ -1,0 +1,236 @@
+---
+title: "Catalogo de sismos en México"
+output:
+  flexdashboard::flex_dashboard:
+    #orientation: columns
+    # vertical_layout: fill
+    css: ssn_col.css
+    runtime: shiny
+---
+```{r global, include=FALSE}
+# load data in 'global' chunk so it can be shared by all users of the dashboard
+library(flexdashboard)
+library(leaflet)
+library(leaflet.extras)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(stringr)
+library(htmltools)
+# library(shiny)
+
+data = read.csv("SSNMX_catalogo_20190801_20190926.csv")
+plates<-readLines("plates.geojson") %>% paste(collapse = "\n")
+fallas<-readLines("fallas.geojson") %>% paste(collapse = "\n")
+sismos = data[complete.cases(data),]# elige de todo el df unicamente los completos, quita los NA
+sismos$Fecha2= as.Date(sismos$Fecha, format= "%d/%m/%Y") #Se hace el cast a date.
+sismos$Estado <- sub(".*, ", "", sismos$Referencia.de.localizacion); sismos$Estado <- sub(" ", "", sismos$Estado)
+sismos$Estado <- factor(sismos$Estado, levels = sort(unique(sismos$Estado)))
+rm(data)
+
+```
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+```{r plotsaved, echo=F, out.width = '100%'} 
+knitr::include_graphics("SSN_logo.png")
+```
+  
+  
+Sistema de consulta de sismos por ubicación, magnitud y rangos de tiempo basado en datos disponibles del [**Servicio Sismológico Nacional**](http://www.ssn.unam.mx)
+  
+  
+```{r}
+#Selector, Oaxaca predeterminado.
+dateRangeInput("daterang", "Periodo de observación:",
+                 start  = min(sismos$Fecha2),
+                 end    = max(sismos$Fecha2),
+                 min    = min(sismos$Fecha2),
+                 max    = max(sismos$Fecha2),
+                 format = "dd/mm/yy",
+                 separator = " - ")
+
+sliderInput("mag", label = "Magnitud del sismo:",
+            min = min(sismos$Magnitud), max = max(sismos$Magnitud), value=range(sismos$Magnitud),
+            round = 0, step = 0.1)
+
+selectInput("ref", label = "Seleccione los lugares de interés:",
+            choices = levels(sismos$Estado), selected = "OAX", multiple = T)
+
+```
+  
+#### Actividad sísmica en México
+```{r}
+
+renderPlot({
+    ggplot(sismos, aes(x = Magnitud, y = Estado)) + 
+    geom_point(alpha = 0.15, colour = "orangered3")+
+    scale_y_discrete(limits=sort(levels(sismos$Estado), decreasing=T)) +
+    xlab("Magnitud")+ylab(NULL)+
+    # ggtitle("Magnitud de todos\nlos sismos disponibles")+
+    theme_light() +
+    theme(axis.text.y = element_text(size=rel(1.1), colour = "gray18", face="italic"),
+          axis.text.x = element_text(size=rel(1.4), colour = "gray18", face="bold.italic"),
+          axis.title = element_text(size=rel(1.5))) #+
+})
+
+```  
+
+
+Column 
+-----------------------------------------------------------------------
+### Reporte de los sismos seleccionados  
+
+<b>Reporte del subconjunto de sismos registrados entre el `r textOutput("min_date", inline=T)` hasta el `r textOutput("max_date", inline=T)` de acuerdo con lo reportado por el Servicio Sismológico Nacional</b>  
+
+Parámetro               |           |  Día y hora            |  Estado        | Estatus   
+:-----------------------|:---------:|:----------------------:|:--------------:|:--------------:
+*Sismo más intenso*   | `r textOutput("sis_fuer", inline=T)` | `r textOutput("sis_fuer_dh", inline=T)` | `r textOutput("sis_fuer_Edo", inline=T)` | `r textOutput("sis_fuer_es", inline=T)`     
+*Sismo más profundo* | `r textOutput("sis_prof", inline=T)` | `r textOutput("sis_prof_dh", inline=T)` | `r textOutput("sis_prof_Edo", inline=T)` | `r textOutput("sis_prof_es", inline=T)`  
+*Sismo más somero*   | `r textOutput("sis_som", inline=T)` | `r textOutput("sis_som_dh", inline=T)` | `r textOutput("sis_som_Edo", inline=T)` | `r textOutput("sis_som_es", inline=T)`
+                     |  |  |  |
+*Estado con más sismos* |   |      | **`r names(summary(sismos$Estado) %>% which.max())`** |
+ | | | | 
+  
+
+```{r, context="server"}
+sismos.filter = reactive({ subset(sismos, 
+                       sismos$Estado == input$ref
+                       & round(Magnitud,1) <= round(input$mag[2], 1)
+                       & round(Magnitud,1) >= round(input$mag[1], 1)
+                       & sismos$Fecha2 >= input$daterang[1]
+                       & sismos$Fecha2 <= input$daterang[2]
+                       )  })
+#input$mag = mean(sismos$Magnitud); input$ref = "OAX"
+
+output$min_date <- renderText(input$daterang[1] %>% format("%d de %B del %Y"))
+output$max_date <- renderText(input$daterang[2] %>% format("%d de %B del %Y"))
+
+output$sis_fuer <- renderText(max (sismos.filter()$Magnitud))
+output$sis_fuer_dh <- renderText(paste(sismos.filter()$Fecha2[which.max(sismos.filter()$Magnitud)], sismos.filter()$Hora[which.max(sismos.filter()$Magnitud)]))
+output$sis_fuer_Edo <- renderText(sismos.filter()[which.max(sismos.filter()$Magnitud),"Estado"] %>% as.character.factor())
+output$sis_fuer_es <- renderText(sismos.filter()$Estatus[which.max(sismos.filter()$Magnitud)] %>% as.character.factor())
+
+output$sis_prof <- renderText(paste(max(sismos.filter()$Profundidad), "km"))
+output$sis_prof_dh <- renderText(paste(sismos.filter()$Fecha2[which.max(sismos.filter()$Profundidad)], sismos.filter()$Hora[which.max(sismos.filter()$Profundidad)]))
+output$sis_prof_Edo <- renderText(sismos.filter()[which.max(sismos.filter()$Profundidad),"Estado"] %>% as.character.factor())
+output$sis_prof_es <- renderText(sismos.filter()$Estatus[which.max(sismos.filter()$Profundidad)] %>% as.character.factor())
+
+output$sis_som <- renderText(paste(min(sismos.filter()$Profundidad), "km"))
+output$sis_som_dh <- renderText(paste(sismos.filter()$Fecha2[which.min(sismos.filter()$Profundidad)], sismos.filter()$Hora[which.min(sismos.filter()$Profundidad)]))
+output$sis_som_Edo <- renderText(sismos.filter()[which.min(sismos.filter()$Profundidad),"Estado"] %>% as.character.factor())
+output$sis_som_es <- renderText(sismos.filter()$Estatus[which.min(sismos.filter()$Profundidad)] %>% as.character.factor())
+
+```
+
+
+### Mapa de visualización de sismos {data-height=520}
+```{r, context="server"}
+pal=colorBin("Spectral", domain = ~Magnitud, 
+         bins = c(9,7,5,4,3,1), na.color = "transparent", reverse = T)
+
+labz <- reactive({
+  lapply(seq(nrow(sismos.filter())), function(i) {
+  paste( '<p align="right"> <i>', 
+         sismos.filter()[i, "Fecha"], sismos.filter()[i, "Hora"] , '</i></p><p>', 
+          "Magnitud de", '<b>', sismos.filter()[i, "Magnitud"], '</b>,', 
+          sismos.filter()[i, "Profundidad"], "km de profundidad",'</p><p>', 
+          sismos.filter()[i, "Referencia.de.localizacion"], '</p>') }) 
+})
+
+
+output$maps <- renderLeaflet({
+  leaflet(sismos.filter())%>%addProviderTiles(providers$Esri.OceanBasemap) %>%
+  setView(-100.5028,20.989 , 4) %>% 
+    addCircles(lng = ~Longitud, lat = ~Latitud, 
+               label = lapply(labz(), htmltools::HTML), labelOptions = labelOptions(opacity = 0.8),
+               weight = 11, color= ~pal(Magnitud), opacity = 0.6,
+               highlightOptions = highlightOptions(weight = 19, opacity = 0.8),
+               group = "Sismos puntuales",
+    ) %>%
+    addHeatmap(lng = ~Longitud, lat = ~Latitud, intensity = ~Magnitud,
+               blur = 30, max = 0.05, radius = 15, group = "Sismos agregados") %>% 
+    addGeoJSON(plates, color = "red", group = "Placas tectónicas") %>%
+    addGeoJSON(fallas, color = "gray", group = "Fallas y fracturas") %>%
+    addLegend(position = "bottomleft", values = ~Magnitud,
+              pal = pal) %>% 
+    addLayersControl(
+      baseGroups = c("Sismos agregados", "Sismos puntuales"),
+      overlayGroups = c("Placas tectónicas", "Fallas y fracturas"),
+      options = layersControlOptions(collapsed = FALSE)
+    ) %>% 
+  hideGroup("Sismos puntuales") %>% 
+  hideGroup("Fallas y fracturas")
+
+})
+
+observe(  {  
+  click = input$maps_shape_click
+    if(is.null(click))
+      return()
+    else
+      leafletProxy("maps") %>%
+      setView(lng = click$lng , lat = click$lat, zoom = 10)
+    
+    }  )
+```
+```{r, echo=FALSE}
+leafletOutput("maps", width = "auto")
+```
+
+> 
+> Autor:
+> Joaquín Nava 
+> Tel. **+52 55 5075 7136**
+> email: **jnava@centrogeo.edu.mx**
+> 
+
+
+Column {data-width=290}
+-----------------------------------------------------------------------
+### Variabilidad sismológica en el periodo establecido
+```{r, echo=FALSE} 
+plotOutput("num_sis", width = "100%")
+```
+```{r, context="server"}
+output$num_sis <- renderPlot({ #reactive({  
+  ggplot(sismos.filter(), aes(x=Fecha2))+
+    geom_bar(aes(fill = cut(Magnitud, breaks=seq(0.5,9.5, by=0.5), labels=seq(1,9.5, by=0.5))), stat="count", width = 1)+
+    scale_x_date(date_labels = "%d %b")+
+    scale_fill_brewer(name="Magnitud", palette = "Spectral", direction = -1)+ #palette = "YlOrBr"
+    # scale_y_log10() + #limits = c(0.1,NA)
+    coord_trans(y = "sqrt") +
+    labs(x=NULL, y="Número de sismos") +
+    theme_classic() +
+    theme(legend.position = "top",#legend.justification = "left", legend.direction = "horizontal",
+          legend.text = element_text(size=rel(1.4)), 
+          legend.key.size = unit(0.7, "lines"),
+          axis.title.y = element_text(face="bold.italic", size=rel(1.5)), 
+          axis.text=element_text(size=rel(1.5)),
+          legend.text.align = 0)+
+    guides(fill=guide_legend(nrow=1,byrow=TRUE))
+  })#  })
+```
+---
+
+
+
+
+
+### Reporte general de sismos {data-height=520}
+
+> Sismos registrados desde el `r format(min(sismos$Fecha2),"%d de %B del %Y")` hasta el `r format(max(sismos$Fecha2),"%d de %B del %Y")`  
+
+Parámetro               |           |  Día y hora            |  Estado        | Estatus   
+:-----------------------|:---------:|:----------------------:|:--------------:|:--------------:
+*Sismo más intenso*   | `r max (sismos$Magnitud)` | `r paste(sismos$Fecha2[which.max(sismos$Magnitud)], sismos$Hora[which.max(sismos$Magnitud)])` | `r sismos$Estado[which.max(sismos$Magnitud)]` | `r sismos$Estatus[which.max(sismos$Magnitud)]`     
+*Sismo más profundo* | `r paste0(max(sismos$Profundidad), "km")` | `r paste(sismos$Fecha2[which.max(sismos$Profundidad)], sismos$Hora[which.max(sismos$Profundidad)])` | `r sismos$Estado[which.max(sismos$Profundidad)]` | `r sismos$Estatus[which.max(sismos$Profundidad)]`  
+*Sismo más somero*   | `r paste0(min (sismos$Profundidad), "km")` | `r paste(sismos$Fecha2[which.min(sismos$Profundidad)], sismos$Hora[which.min(sismos$Profundidad)])` | `r sismos$Estado[which.min(sismos$Profundidad)]` | `r sismos$Estatus[which.min(sismos$Profundidad)]`
+                     |  |  |  |
+*Estado con más sismos* |   |      | **`r names(summary(sismos$Estado) %>% which.max())`** |
+ | | | | 
+> 
+> 
+> 
+  
